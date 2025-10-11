@@ -1,4 +1,4 @@
-# Hospital Management System - Backend
+# Patient Management System - Backend
 
 ## Overview
 

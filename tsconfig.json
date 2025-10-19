@@ -10,10 +10,11 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "moduleResolution": "bundler",  // Changed from "node16" to "bundler"
+    "moduleResolution": "node10",  // Changed back to node10 for commonjs
     "types": ["node"],
-    "typeRoots": ["./node_modules/@types", "./src/types"],  // Added ./src/types
-    "allowSyntheticDefaultImports": true
+    "typeRoots": ["./node_modules/@types", "./src/types"],
+    "allowSyntheticDefaultImports": true,
+    "ignoreDeprecations": "5.0"  // Suppress the deprecation warning
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]

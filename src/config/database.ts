@@ -1,17 +1,14 @@
 import mongoose from "mongoose";
-import dotenv from "dotenv";
-
-dotenv.config();
 
 const connectDB = async (): Promise<void> => {
   try {
-    const mongoURI =
-      process.env.MONGODB_URI ||
-      "mongodb://localhost:27017/hospital-management";
+    const mongoURI = process.env.MONGODB_URI;
 
-    await mongoose.connect(mongoURI, {
-      dbName: "hospital-management",
-    });
+    if (!mongoURI) {
+      throw new Error("MONGODB_URI is not defined in environment variables");
+    }
+
+    await mongoose.connect(mongoURI);  // ✅ Remove the options object
 
     console.log("MongoDB connected successfully");
   } catch (error) {

@@ -1,5 +1,5 @@
 import session from 'express-session';
-import { RedisStore } from 'connect-redis'; // Import RedisStore directly
+import RedisStore from 'connect-redis';  // ✅ Default import, not named import
 import { createClient } from 'redis';
 
 /**
@@ -13,7 +13,7 @@ export const createSessionStore = async () => {
   const redisClient = createClient({
     url: redisUrl,
     socket: {
-      reconnectStrategy: (retries) => {
+      reconnectStrategy: (retries: number) => {  // ✅ Added type annotation
         if (retries > 10) {
           console.error('Redis session client: Max reconnection attempts reached');
           return new Error('Max reconnection attempts reached');
@@ -24,7 +24,7 @@ export const createSessionStore = async () => {
   });
 
   // Error handling
-  redisClient.on('error', (err) => {
+  redisClient.on('error', (err: Error) => {  // ✅ Added type annotation
     console.error('Redis Session Client Error:', err);
   });
 
@@ -39,7 +39,7 @@ export const createSessionStore = async () => {
   // Connect to Redis
   await redisClient.connect();
 
-  // Create Redis store - directly instantiate RedisStore
+  // Create Redis store
   return new RedisStore({
     client: redisClient,
     prefix: 'sess:', // Session keys: sess:xxxxx
@@ -50,7 +50,7 @@ export const createSessionStore = async () => {
 /**
  * Session configuration
  */
-export const getSessionConfig = (store: session.Store): session.SessionOptions => ({
+export const getSessionConfig = (store: RedisStore): session.SessionOptions => ({
   store,
   secret: process.env.SESSION_SECRET || 'fallback-secret-change-this',
   resave: false,

@@ -2,8 +2,14 @@ import { Request, Response } from "express";
 import mongoose from "mongoose";
 import Appointment from "../models/Appointment";
 import Patient from "../models/Patient";
+import { httpCacheService } from "../services/cacheService";
 
-// Create new appointment
+/**
+ * CREATE NEW APPOINTMENT
+ * Creates a new appointment and invalidates relevant cache entries
+ * Cache Strategy: Invalidate related caches after successful creation including
+ * department-specific, date-specific, and patient-specific appointment caches
+ */
 export const createAppointment = async (
   req: Request,
   res: Response
@@ -72,6 +78,35 @@ export const createAppointment = async (
     const appointment = new Appointment(appointmentData);
     await appointment.save();
 
+    // Comprehensive cache invalidation after appointment creation
+    // Invalidate all appointments cache to ensure data consistency
+    await httpCacheService.invalidateCache('appointments');
+    
+    // Invalidate patient-specific appointment cache
+    if (appointment.patientId) {
+      await httpCacheService.invalidateCache('appointments', `*patient:${appointment.patientId}*`);
+    }
+    
+    // Invalidate department-specific cache
+    if (appointment.department) {
+      await httpCacheService.invalidateCache('appointments', `*department:${appointment.department}*`);
+    }
+    
+    // Invalidate doctor-specific cache
+    if (appointment.doctorName) {
+      await httpCacheService.invalidateCache('appointments', `*doctor:${appointment.doctorName}*`);
+    }
+    
+    // Invalidate date-specific cache (today's appointments, specific date filters)
+    const appointmentDateStr = appointment.appointmentDate.toISOString().split('T')[0];
+    await httpCacheService.invalidateCache('appointments', `*date:${appointmentDateStr}*`);
+    await httpCacheService.invalidateCache('appointments', `*today*`);
+    
+    // Invalidate status-specific cache
+    await httpCacheService.invalidateCache('appointments', `*status:${appointment.status}*`);
+
+    console.log(`[APPOINTMENTS] New appointment created: ${appointment._id} for patient: ${appointment.patientId} in department: ${appointment.department}`);
+
     res.status(201).json({
       success: true,
       message: "Appointment created successfully",
@@ -82,8 +117,21 @@ export const createAppointment = async (
           name: req.userType === "admin" ? req.admin?.name : req.staff?.name,
         },
       },
+      cache: {
+        invalidated: true,
+        patterns: [
+          'appointments:*',
+          `appointments:*patient:${appointment.patientId}*`,
+          `appointments:*department:${appointment.department}*`,
+          `appointments:*doctor:${appointment.doctorName}*`,
+          `appointments:*date:${appointmentDateStr}*`,
+          `appointments:*today*`,
+          `appointments:*status:${appointment.status}*`
+        ]
+      }
     });
   } catch (error) {
+    console.error('[APPOINTMENTS] Error creating appointment:', error);
     res.status(400).json({
       success: false,
       message: "Error creating appointment",
@@ -92,7 +140,12 @@ export const createAppointment = async (
   }
 };
 
-// Get all appointments with filters
+/**
+ * GET ALL APPOINTMENTS WITH FILTERS
+ * Retrieves appointments with department, doctor, status, and date filters
+ * Cache Strategy: Cache results based on query parameters with 5-minute TTL
+ * Cache key includes all filter parameters for precise cache matching
+ */
 export const getAllAppointments = async (
   req: Request,
   res: Response
@@ -108,6 +161,10 @@ export const getAllAppointments = async (
       page = 1,
       limit = 10,
     } = req.query;
+
+    console.log(`[APPOINTMENTS] Fetching appointments with filters:`, {
+      department, doctorName, status, appointmentDate, fromDate, toDate, page, limit
+    });
 
     // Build query object
     const query: any = { isActive: true };
@@ -168,7 +225,7 @@ export const getAllAppointments = async (
     const totalAppointments = await Appointment.countDocuments(query);
     const totalPages = Math.ceil(totalAppointments / limitNum);
 
-    res.json({
+    const response = {
       success: true,
       message: "Appointments retrieved successfully",
       data: {
@@ -185,8 +242,17 @@ export const getAllAppointments = async (
           name: req.userType === "admin" ? req.admin?.name : req.staff?.name,
         },
       },
-    });
+      cache: {
+        served_from: 'database', // Will be overridden if served from cache
+        query_signature: `dept:${department || 'all'}_doctor:${doctorName || 'none'}_status:${status || 'all'}_date:${appointmentDate || 'none'}_range:${fromDate || 'none'}-${toDate || 'none'}_page:${pageNum}_limit:${limitNum}`
+      }
+    };
+
+    console.log(`[APPOINTMENTS] Appointments retrieved: ${appointments.length} items, page ${pageNum}/${totalPages}`);
+
+    res.json(response);
   } catch (error) {
+    console.error('[APPOINTMENTS] Error fetching appointments:', error);
     res.status(500).json({
       success: false,
       message: "Error fetching appointments",
@@ -195,13 +261,19 @@ export const getAllAppointments = async (
   }
 };
 
-// Get appointment by ID
+/**
+ * GET APPOINTMENT BY ID
+ * Retrieves a specific appointment by its ID with patient details
+ * Cache Strategy: Cache individual appointments with 10-minute TTL
+ */
 export const getAppointmentById = async (
   req: Request,
   res: Response
 ): Promise<void> => {
   try {
     const { id } = req.params;
+
+    console.log(`[APPOINTMENTS] Fetching appointment by ID: ${id}`);
 
     // Validate ObjectId format
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -237,8 +309,13 @@ export const getAppointmentById = async (
           name: req.userType === "admin" ? req.admin?.name : req.staff?.name,
         },
       },
+      cache: {
+        served_from: 'database', // Will be overridden if served from cache
+        appointment_id: id
+      }
     });
   } catch (error) {
+    console.error('[APPOINTMENTS] Error fetching appointment details:', error);
     res.status(500).json({
       success: false,
       message: "Error fetching appointment details",
@@ -247,7 +324,12 @@ export const getAppointmentById = async (
   }
 };
 
-// Update appointment
+/**
+ * UPDATE APPOINTMENT
+ * Updates an existing appointment and invalidates relevant cache entries
+ * Cache Strategy: Invalidate specific appointment cache and related patterns
+ * Handles changes in department, doctor, date, and status with targeted invalidation
+ */
 export const updateAppointment = async (
   req: Request,
   res: Response
@@ -261,6 +343,16 @@ export const updateAppointment = async (
       res.status(400).json({
         success: false,
         message: "Invalid appointment ID format",
+      });
+      return;
+    }
+
+    // Get existing appointment for cache invalidation comparison
+    const existingAppointment = await Appointment.findById(id);
+    if (!existingAppointment) {
+      res.status(404).json({
+        success: false,
+        message: "Appointment not found",
       });
       return;
     }
@@ -291,6 +383,61 @@ export const updateAppointment = async (
       return;
     }
 
+    // Comprehensive cache invalidation for appointment updates
+    // Invalidate specific appointment cache
+    await httpCacheService.invalidateCache('appointments', `*${id}*`);
+    
+    // Invalidate all appointments list cache
+    await httpCacheService.invalidateCache('appointments', '*getAllAppointments*');
+    
+    // Invalidate patient-specific cache (both old and new if patient changed)
+    if (existingAppointment.patientId) {
+      await httpCacheService.invalidateCache('appointments', `*patient:${existingAppointment.patientId}*`);
+    }
+    if (appointment.patientId && appointment.patientId.toString() !== existingAppointment.patientId.toString()) {
+      await httpCacheService.invalidateCache('appointments', `*patient:${appointment.patientId}*`);
+    }
+    
+    // Invalidate department-specific cache (both old and new if department changed)
+    if (existingAppointment.department) {
+      await httpCacheService.invalidateCache('appointments', `*department:${existingAppointment.department}*`);
+    }
+    if (appointment.department && appointment.department !== existingAppointment.department) {
+      await httpCacheService.invalidateCache('appointments', `*department:${appointment.department}*`);
+    }
+    
+    // Invalidate doctor-specific cache (both old and new if doctor changed)
+    if (existingAppointment.doctorName) {
+      await httpCacheService.invalidateCache('appointments', `*doctor:${existingAppointment.doctorName}*`);
+    }
+    if (appointment.doctorName && appointment.doctorName !== existingAppointment.doctorName) {
+      await httpCacheService.invalidateCache('appointments', `*doctor:${appointment.doctorName}*`);
+    }
+    
+    // Invalidate date-specific cache (both old and new if date changed)
+    const existingDateStr = existingAppointment.appointmentDate.toISOString().split('T')[0];
+    await httpCacheService.invalidateCache('appointments', `*date:${existingDateStr}*`);
+    
+    if (appointment.appointmentDate) {
+      const newDateStr = appointment.appointmentDate.toISOString().split('T')[0];
+      if (newDateStr !== existingDateStr) {
+        await httpCacheService.invalidateCache('appointments', `*date:${newDateStr}*`);
+      }
+    }
+    
+    // Invalidate today's appointments cache
+    await httpCacheService.invalidateCache('appointments', `*today*`);
+    
+    // Invalidate status-specific cache (both old and new if status changed)
+    if (existingAppointment.status) {
+      await httpCacheService.invalidateCache('appointments', `*status:${existingAppointment.status}*`);
+    }
+    if (appointment.status && appointment.status !== existingAppointment.status) {
+      await httpCacheService.invalidateCache('appointments', `*status:${appointment.status}*`);
+    }
+
+    console.log(`[APPOINTMENTS] Appointment updated: ${appointment._id}`);
+
     res.json({
       success: true,
       message: "Appointment updated successfully",
@@ -301,8 +448,19 @@ export const updateAppointment = async (
           name: req.userType === "admin" ? req.admin?.name : req.staff?.name,
         },
       },
+      cache: {
+        invalidated: true,
+        patterns: [
+          `appointments:*${id}*`,
+          `appointments:*patient:${appointment.patientId}*`,
+          `appointments:*department:${appointment.department}*`,
+          `appointments:*doctor:${appointment.doctorName}*`,
+          'appointments:*today*'
+        ]
+      }
     });
   } catch (error) {
+    console.error('[APPOINTMENTS] Error updating appointment:', error);
     res.status(400).json({
       success: false,
       message: "Error updating appointment",
@@ -311,7 +469,11 @@ export const updateAppointment = async (
   }
 };
 
-// Delete appointment (soft delete)
+/**
+ * DELETE APPOINTMENT (SOFT DELETE)
+ * Soft delete by setting isActive to false and invalidating relevant cache entries
+ * Cache Strategy: Invalidate related cache entries after soft delete
+ */
 export const deleteAppointment = async (
   req: Request,
   res: Response
@@ -344,6 +506,38 @@ export const deleteAppointment = async (
       return;
     }
 
+    // Comprehensive cache invalidation for appointment deletion
+    // Invalidate specific appointment cache
+    await httpCacheService.invalidateCache('appointments', `*${id}*`);
+    
+    // Invalidate all appointments list cache (since count changes)
+    await httpCacheService.invalidateCache('appointments');
+    
+    // Invalidate patient-specific cache
+    if (appointment.patientId) {
+      await httpCacheService.invalidateCache('appointments', `*patient:${appointment.patientId}*`);
+    }
+    
+    // Invalidate department-specific cache
+    if (appointment.department) {
+      await httpCacheService.invalidateCache('appointments', `*department:${appointment.department}*`);
+    }
+    
+    // Invalidate doctor-specific cache
+    if (appointment.doctorName) {
+      await httpCacheService.invalidateCache('appointments', `*doctor:${appointment.doctorName}*`);
+    }
+    
+    // Invalidate date-specific cache
+    const appointmentDateStr = appointment.appointmentDate.toISOString().split('T')[0];
+    await httpCacheService.invalidateCache('appointments', `*date:${appointmentDateStr}*`);
+    await httpCacheService.invalidateCache('appointments', `*today*`);
+    
+    // Invalidate status-specific cache
+    await httpCacheService.invalidateCache('appointments', `*status:${appointment.status}*`);
+
+    console.log(`[APPOINTMENTS] Appointment cancelled: ${appointment._id}`);
+
     res.json({
       success: true,
       message: "Appointment cancelled successfully",
@@ -354,8 +548,18 @@ export const deleteAppointment = async (
           name: req.userType === "admin" ? req.admin?.name : req.staff?.name,
         },
       },
+      cache: {
+        invalidated: true,
+        patterns: [
+          `appointments:*${id}*`,
+          `appointments:*patient:${appointment.patientId}*`,
+          `appointments:*department:${appointment.department}*`,
+          `appointments:*today*`
+        ]
+      }
     });
   } catch (error) {
+    console.error('[APPOINTMENTS] Error cancelling appointment:', error);
     res.status(500).json({
       success: false,
       message: "Error cancelling appointment",
@@ -364,13 +568,19 @@ export const deleteAppointment = async (
   }
 };
 
-// Get appointments by department
+/**
+ * GET APPOINTMENTS BY DEPARTMENT
+ * Retrieves appointments filtered by department
+ * Cache Strategy: Cache department-specific queries with 5-minute TTL
+ */
 export const getAppointmentsByDepartment = async (
   req: Request,
   res: Response
 ): Promise<void> => {
   try {
     const { department } = req.params;
+
+    console.log(`[APPOINTMENTS] Fetching appointments for department: ${department}`);
 
     const appointments = await Appointment.find({
       department,
@@ -392,8 +602,13 @@ export const getAppointmentsByDepartment = async (
           name: req.userType === "admin" ? req.admin?.name : req.staff?.name,
         },
       },
+      cache: {
+        served_from: 'database', // Will be overridden if served from cache
+        department_filter: department
+      }
     });
   } catch (error) {
+    console.error('[APPOINTMENTS] Error fetching appointments by department:', error);
     res.status(500).json({
       success: false,
       message: "Error fetching appointments by department",
@@ -402,12 +617,19 @@ export const getAppointmentsByDepartment = async (
   }
 };
 
-// Get today's appointments
+/**
+ * GET TODAY'S APPOINTMENTS
+ * Retrieves all appointments scheduled for today
+ * Cache Strategy: Cache today's appointments with 2-minute TTL (frequently changing data)
+ * This is critical for dashboard real-time updates
+ */
 export const getTodaysAppointments = async (
   req: Request,
   res: Response
 ): Promise<void> => {
   try {
+    console.log(`[APPOINTMENTS] Fetching today's appointments`);
+
     const today = new Date();
     const startOfDay = new Date(today.setHours(0, 0, 0, 0));
     const endOfDay = new Date(today.setHours(23, 59, 59, 999));
@@ -435,8 +657,14 @@ export const getTodaysAppointments = async (
           name: req.userType === "admin" ? req.admin?.name : req.staff?.name,
         },
       },
+      cache: {
+        served_from: 'database', // Will be overridden if served from cache
+        query_type: 'todays_appointments',
+        date: today.toISOString().split('T')[0]
+      }
     });
   } catch (error) {
+    console.error('[APPOINTMENTS] Error fetching today\'s appointments:', error);
     res.status(500).json({
       success: false,
       message: "Error fetching today's appointments",
@@ -445,7 +673,11 @@ export const getTodaysAppointments = async (
   }
 };
 
-// Update appointment status
+/**
+ * UPDATE APPOINTMENT STATUS
+ * Updates only the status of an appointment and invalidates relevant cache entries
+ * Cache Strategy: Invalidate status-specific and appointment-specific caches
+ */
 export const updateAppointmentStatus = async (
   req: Request,
   res: Response
@@ -473,6 +705,16 @@ export const updateAppointmentStatus = async (
       return;
     }
 
+    // Get existing appointment for cache invalidation
+    const existingAppointment = await Appointment.findById(id);
+    if (!existingAppointment) {
+      res.status(404).json({
+        success: false,
+        message: "Appointment not found",
+      });
+      return;
+    }
+
     const appointment = await Appointment.findByIdAndUpdate(
       id,
       { status },
@@ -489,6 +731,27 @@ export const updateAppointmentStatus = async (
       return;
     }
 
+    // Cache invalidation for status update
+    // Invalidate specific appointment cache
+    await httpCacheService.invalidateCache('appointments', `*${id}*`);
+    
+    // Invalidate all appointments list cache
+    await httpCacheService.invalidateCache('appointments', '*getAllAppointments*');
+    
+    // Invalidate old status cache
+    if (existingAppointment.status) {
+      await httpCacheService.invalidateCache('appointments', `*status:${existingAppointment.status}*`);
+    }
+    
+    // Invalidate new status cache
+    await httpCacheService.invalidateCache('appointments', `*status:${status}*`);
+    
+    // Invalidate department and today's cache as status affects these views
+    await httpCacheService.invalidateCache('appointments', `*department:${appointment.department}*`);
+    await httpCacheService.invalidateCache('appointments', `*today*`);
+
+    console.log(`[APPOINTMENTS] Appointment status updated: ${appointment._id} from ${existingAppointment.status} to ${status}`);
+
     res.json({
       success: true,
       message: `Appointment status updated to ${status}`,
@@ -499,8 +762,23 @@ export const updateAppointmentStatus = async (
           name: req.userType === "admin" ? req.admin?.name : req.staff?.name,
         },
       },
+      cache: {
+        invalidated: true,
+        status_change: {
+          from: existingAppointment.status,
+          to: status
+        },
+        patterns: [
+          `appointments:*${id}*`,
+          `appointments:*status:${existingAppointment.status}*`,
+          `appointments:*status:${status}*`,
+          `appointments:*department:${appointment.department}*`,
+          'appointments:*today*'
+        ]
+      }
     });
   } catch (error) {
+    console.error('[APPOINTMENTS] Error updating appointment status:', error);
     res.status(400).json({
       success: false,
       message: "Error updating appointment status",

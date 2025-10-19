@@ -25,52 +25,52 @@ import {
   requirePermission,
   requireSuperAdmin,
 } from "../middleware/auth";
-
+import {
+  adminsCacheMiddleware,
+  adminsCacheInvalidation,
+  staffCacheMiddleware,
+  staffCacheInvalidation,
+  accountantsCacheMiddleware,
+  accountantsCacheInvalidation,
+} from "../middleware/cacheMiddleware";
 const router = express.Router();
 
 // All routes require admin authentication
 router.use(authenticateAdmin);
 
-// Admin management routes (super admin only for most operations)
-router.get("/getAllAdmins", requireSuperAdmin, getAllAdmins);
-router.get("/getAdmin/:id", requirePermission("adminManagement"), getAdminById);
-router.post("/createAdmin", requireSuperAdmin, createAdmin);
-router.put("/updateAdmin/:id", requireSuperAdmin, updateAdmin);
-router.delete("/deleteAdmin/:id", requireSuperAdmin, deleteAdmin);
+// Write operations - with cache invalidation
+router.post("/createAdmin", requireSuperAdmin, adminsCacheInvalidation, createAdmin);
+router.put("/updateAdmin/:id", requireSuperAdmin, adminsCacheInvalidation, updateAdmin);
+router.delete("/deleteAdmin/:id", requireSuperAdmin, adminsCacheInvalidation, deleteAdmin);
 
+// Read operations - with caching
+router.get("/getAllAdmins", requireSuperAdmin, adminsCacheMiddleware, getAllAdmins);
+router.get("/getAdmin/:id", requirePermission("adminManagement"), adminsCacheMiddleware, getAdminById);
 
-// Staff management routes
-router.get("/getAllStaff", requirePermission("staffManagement"), getAllStaff);
-router.get("/getStaff/:id", requirePermission("staffManagement"), getStaffById);
-router.post("/createStaff", requirePermission("staffManagement"), createStaff);
-router.put("/updateStaff/:id", requirePermission("staffManagement"), updateStaff);
-router.delete("/deleteStaff/:id", requirePermission("staffManagement"), deleteStaff);
+// ============================================
+// STAFF MANAGEMENT ROUTES
+// ============================================
 
-// Accountant management routes
-router.get(
-  "/getAllAccountants",
-  requirePermission("accountantManagement"),
-  getAllAccountants
-);
-router.get(
-  "/getAccountantById/:id",
-  requirePermission("accountantManagement"),
-  getAccountantById
-);
-router.post(
-  "/createAccountant",
-  requirePermission("accountantManagement"),
-  createAccountant
-);
-router.put(
-  "/updateAccountant/:id",
-  requirePermission("accountantManagement"),
-  updateAccountant
-);
-router.delete(
-  "/deleteAccountant/:id",
-  requirePermission("accountantManagement"),
-  deleteAccountant
-);
+// Write operations - with cache invalidation
+router.post("/createStaff", requirePermission("staffManagement"), staffCacheInvalidation, createStaff);
+router.put("/updateStaff/:id", requirePermission("staffManagement"), staffCacheInvalidation, updateStaff);
+router.delete("/deleteStaff/:id", requirePermission("staffManagement"), staffCacheInvalidation, deleteStaff);
+
+// Read operations - with caching
+router.get("/getAllStaff", requirePermission("staffManagement"), staffCacheMiddleware, getAllStaff);
+router.get("/getStaff/:id", requirePermission("staffManagement"), staffCacheMiddleware, getStaffById);
+
+// ============================================
+// ACCOUNTANT MANAGEMENT ROUTES
+// ============================================
+
+// Write operations - with cache invalidation
+router.post("/createAccountant", requirePermission("accountantManagement"), accountantsCacheInvalidation, createAccountant);
+router.put("/updateAccountant/:id", requirePermission("accountantManagement"), accountantsCacheInvalidation, updateAccountant);
+router.delete("/deleteAccountant/:id", requirePermission("accountantManagement"), accountantsCacheInvalidation, deleteAccountant);
+
+// Read operations - with caching
+router.get("/getAllAccountants", requirePermission("accountantManagement"), accountantsCacheMiddleware, getAllAccountants);
+router.get("/getAccountantById/:id", requirePermission("accountantManagement"), accountantsCacheMiddleware, getAccountantById);
 
 export default router;

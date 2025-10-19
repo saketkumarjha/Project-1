@@ -9,19 +9,19 @@ import {
   deletePatient,
   emergencyRegistration,
 } from "../controllers/patientController";
+import { patientsCacheMiddleware, patientsCacheInvalidation } from "../middleware/cacheMiddleware";
 const router = express.Router();
 
-// All patient routes require authentication and patient access
 router.use(authenticateUser);
 router.use(requirePatientAccess);
 
-// Create new patient (Only for Admin with patientManagement=true OR Staff with patientAccess=true)
-router.post("/create", createPatient);
-router.get("/getAllPatients", getAllPatients);
-router.get("/getPatientById/:id", getPatientById);
-router.get("/getPatientByPatientId/:patientId", getPatientByPatientId);
-router.put("/updatePatient/:id", updatePatient);
-router.delete("/deletePatient/:id", deletePatient);
-router.post("/emergencyRegistration", emergencyRegistration);
+router.get("/getAllPatients", patientsCacheMiddleware, getAllPatients);
+router.get("/getPatientById/:id", patientsCacheMiddleware, getPatientById);
+router.get("/getPatientByPatientId/:patientId", patientsCacheMiddleware, getPatientByPatientId);
+
+router.post("/create", patientsCacheInvalidation, createPatient);
+router.put("/updatePatient/:id", patientsCacheInvalidation, updatePatient);
+router.delete("/deletePatient/:id", patientsCacheInvalidation, deletePatient);
+router.post("/emergencyRegistration", patientsCacheInvalidation, emergencyRegistration);
 
 export default router;

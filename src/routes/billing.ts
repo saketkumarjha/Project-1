@@ -1,154 +1,64 @@
 import express from "express";
 import { authenticateUser, requireBillingAccess } from "../middleware/auth";
+import { 
+  billsCacheMiddleware, 
+  billsCacheInvalidation, 
+  cacheHealthCheck 
+} from "../middleware/cacheMiddleware";
+import { httpCacheService } from "../services/cacheService";
 import Bill from "../models/Bill";
 
 const router = express.Router();
 
-// All billing routes require authentication and billing access
+/**
+ * Authentication & Authorization Middleware
+ * All billing routes require user authentication and billing access permissions
+ */
 router.use(authenticateUser);
 router.use(requireBillingAccess);
 
-// Billing routes
-// router.get("/", (req, res) => {
-//   res.json({
-//     success: true,
-//     message: "Billing dashboard access granted",
-//     data: {
-//       userType: req.userType,
-//       user:
-//         req.userType === "admin"
-//           ? req.admin?.username
-//           : req.accountant?.username,
-//       permissions:
-//         req.userType === "admin"
-//           ? req.admin?.permissions
-//           : req.accountant?.permissions,
-//     },
-//   });
-// });
+/**
+ * Cache Health Check Middleware
+ * Ensures Redis cache service is available for all routes
+ * If cache fails, routes continue to work with database-only operations
+ */
+router.use(cacheHealthCheck);
 
-// router.get("/invoices", async (req, res) => {
-//   try {
-//     const bills = await Bill.find().sort({ createdAt: -1 });
-
-//     res.json({
-//       success: true,
-//       message: "Invoice access granted",
-//       data: {
-//         invoices: bills.map((bill) => ({
-//           id: bill._id,
-//           patientId: bill.patientId,
-//           patientName: bill.patientName,
-//           totalAmount: bill.totalAmount,
-//           subtotal: bill.subtotal,
-//           tax: bill.tax,
-//           discount: bill.discount,
-//           status: bill.status,
-//           items: bill.items,
-//           notes: bill.notes,
-//           createdAt: bill.createdAt,
-//         })),
-//         count: bills.length,
-//       },
-//     });
-//   } catch (error) {
-//     res.status(500).json({
-//       success: false,
-//       message: "Error fetching invoices",
-//       error: error instanceof Error ? error.message : "Unknown error",
-//     });
-//   }
-// });
-
-// router.get("/payments", async (req, res) => {
-//   try {
-//     const bills = await Bill.find().sort({ createdAt: -1 });
-
-//     res.json({
-//       success: true,
-//       message: "Payment access granted",
-//       data: {
-//         payments: bills.map((bill) => ({
-//           id: bill._id,
-//           patientName: bill.patientName,
-//           totalAmount: bill.totalAmount,
-//           status: bill.status,
-//           createdAt: bill.createdAt,
-//         })),
-//         count: bills.length,
-//       },
-//     });
-//   } catch (error) {
-//     res.status(500).json({
-//       success: false,
-//       message: "Error fetching payments",
-//       error: error instanceof Error ? error.message : "Unknown error",
-//     });
-//   }
-// });
-
-// Get bill by ID
-// router.get("/invoices/:id", async (req, res) => {
-//   try {
-//     const { id } = req.params;
-//     const bill = await Bill.findById(id);
-
-//     if (!bill) {
-//       res.status(404).json({
-//         success: false,
-//         message: "Bill not found",
-//       });
-//       return;
-//     }
-
-//     res.json({
-//       success: true,
-//       message: "Bill details retrieved successfully",
-//       data: { bill },
-//     });
-//   } catch (error) {
-//     res.status(500).json({
-//       success: false,
-//       message: "Error fetching bill details",
-//       error: error instanceof Error ? error.message : "Unknown error",
-//     });
-//   }
-// });
-
-// Create new bill
-// router.post("/invoices", async (req, res) => {
-//   try {
-//     const billData = req.body;
-//     const bill = new Bill(billData);
-//     await bill.save();
-
-//     res.status(201).json({
-//       success: true,
-//       message: "Bill created successfully",
-//       data: { bill },
-//     });
-//   } catch (error) {
-//     res.status(400).json({
-//       success: false,
-//       message: "Error creating bill",
-//       error: error instanceof Error ? error.message : "Unknown error",
-//     });
-//   }
-// });
-
-// 1. Create Bill
-router.post("/createBill", async (req, res) => {
+/**
+ * CREATE BILL - POST /api/billing/createBill
+ * Creates a new bill and invalidates relevant cache entries
+ * Cache Strategy: Invalidate related caches after successful creation
+ */
+router.post("/createBill", billsCacheInvalidation, async (req, res) => {
   try {
     const billData = req.body;
     const bill = new Bill(billData);
     await bill.save();
 
+    // Additional specific cache invalidation for related data
+    if (bill.patientId) {
+      // Invalidate patient-specific bill cache
+      await httpCacheService.invalidateCache('bills', `*patient:${bill.patientId}*`);
+    }
+    
+    if (bill.status) {
+      // Invalidate status-specific bill cache
+      await httpCacheService.invalidateCache('bills', `*status:${bill.status}*`);
+    }
+
+    console.log(`[BILLING] New bill created: ${bill._id} for patient: ${bill.patientId}`);
+
     res.status(201).json({
       success: true,
       message: "Bill created successfully",
       data: { bill },
+      cache: {
+        invalidated: true,
+        patterns: ['bills:*', `bills:*patient:${bill.patientId}*`, `bills:*status:${bill.status}*`]
+      }
     });
   } catch (error) {
+    console.error('[BILLING] Error creating bill:', error);
     res.status(400).json({
       success: false,
       message: "Error creating bill",
@@ -157,8 +67,12 @@ router.post("/createBill", async (req, res) => {
   }
 });
 
-// 2. Update Bill
-router.put("/updateBill/:id", async (req, res) => {
+/**
+ * UPDATE BILL - PUT /api/billing/updateBill/:id
+ * Updates an existing bill and invalidates relevant cache entries
+ * Cache Strategy: Invalidate specific bill cache and related patterns
+ */
+router.put("/updateBill/:id", billsCacheInvalidation, async (req, res) => {
   try {
     const { id } = req.params;
     const updateData = req.body;
@@ -176,12 +90,30 @@ router.put("/updateBill/:id", async (req, res) => {
       return;
     }
 
+    // Specific cache invalidation for updated bill
+    await httpCacheService.invalidateCache('bills', `*${id}*`);
+    
+    if (bill.patientId) {
+      await httpCacheService.invalidateCache('bills', `*patient:${bill.patientId}*`);
+    }
+    
+    if (bill.status) {
+      await httpCacheService.invalidateCache('bills', `*status:${bill.status}*`);
+    }
+
+    console.log(`[BILLING] Bill updated: ${bill._id}`);
+
     res.json({
       success: true,
       message: "Bill updated successfully",
       data: { bill },
+      cache: {
+        invalidated: true,
+        patterns: [`bills:*${id}*`, `bills:*patient:${bill.patientId}*`]
+      }
     });
   } catch (error) {
+    console.error('[BILLING] Error updating bill:', error);
     res.status(400).json({
       success: false,
       message: "Error updating bill",
@@ -190,8 +122,12 @@ router.put("/updateBill/:id", async (req, res) => {
   }
 });
 
-// 3. Get All Bills with search and filters
-router.get("/getAllBill", async (req, res) => {
+/**
+ * GET ALL BILLS - GET /api/billing/getAllBill
+ * Retrieves bills with search, filters, and pagination
+ * Cache Strategy: Cache results based on query parameters (5-minute TTL)
+ */
+router.get("/getAllBill", billsCacheMiddleware, async (req, res) => {
   try {
     const {
       search,
@@ -201,6 +137,10 @@ router.get("/getAllBill", async (req, res) => {
       page = 1,
       limit = 10,
     } = req.query;
+
+    console.log(`[BILLING] Fetching bills with filters:`, {
+      search, status, fromDate, toDate, page, limit
+    });
 
     // Build query object
     const query: any = {};
@@ -246,7 +186,7 @@ router.get("/getAllBill", async (req, res) => {
     const totalBills = await Bill.countDocuments(query);
     const totalPages = Math.ceil(totalBills / limitNum);
 
-    res.json({
+    const response = {
       success: true,
       message: "Bills retrieved successfully",
       data: {
@@ -259,8 +199,17 @@ router.get("/getAllBill", async (req, res) => {
           hasPrevPage: pageNum > 1,
         },
       },
-    });
+      cache: {
+        served_from: 'database', // Will be overridden if served from cache
+        query_signature: `search:${search || 'none'}_status:${status || 'all'}_dates:${fromDate || 'none'}-${toDate || 'none'}_page:${pageNum}_limit:${limitNum}`
+      }
+    };
+
+    console.log(`[BILLING] Bills retrieved: ${bills.length} items, page ${pageNum}/${totalPages}`);
+
+    res.json(response);
   } catch (error) {
+    console.error('[BILLING] Error fetching bills:', error);
     res.status(500).json({
       success: false,
       message: "Error fetching bills",
@@ -269,10 +218,17 @@ router.get("/getAllBill", async (req, res) => {
   }
 });
 
-// Get bill by ID
-router.get("/getBill/:id", async (req, res) => {
+/**
+ * GET BILL BY ID - GET /api/billing/getBill/:id
+ * Retrieves a specific bill by its ID
+ * Cache Strategy: Cache individual bills (10-minute TTL)
+ */
+router.get("/getBill/:id", billsCacheMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
+    
+    console.log(`[BILLING] Fetching bill by ID: ${id}`);
+    
     const bill = await Bill.findById(id);
 
     if (!bill) {
@@ -287,8 +243,13 @@ router.get("/getBill/:id", async (req, res) => {
       success: true,
       message: "Bill details retrieved successfully",
       data: { bill },
+      cache: {
+        served_from: 'database', // Will be overridden if served from cache
+        bill_id: id
+      }
     });
   } catch (error) {
+    console.error('[BILLING] Error fetching bill details:', error);
     res.status(500).json({
       success: false,
       message: "Error fetching bill details",
@@ -297,8 +258,12 @@ router.get("/getBill/:id", async (req, res) => {
   }
 });
 
-// Delete bill (soft delete by updating status to cancelled)
-router.delete("/deleteBill/:id", async (req, res) => {
+/**
+ * DELETE BILL - DELETE /api/billing/deleteBill/:id
+ * Soft delete by updating status to cancelled
+ * Cache Strategy: Invalidate related cache entries after soft delete
+ */
+router.delete("/deleteBill/:id", billsCacheInvalidation, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -316,12 +281,29 @@ router.delete("/deleteBill/:id", async (req, res) => {
       return;
     }
 
+    // Specific cache invalidation for cancelled bill
+    await httpCacheService.invalidateCache('bills', `*${id}*`);
+    
+    if (bill.patientId) {
+      await httpCacheService.invalidateCache('bills', `*patient:${bill.patientId}*`);
+    }
+    
+    // Invalidate status-based caches (both old and new status)
+    await httpCacheService.invalidateCache('bills', `*status:cancelled*`);
+
+    console.log(`[BILLING] Bill cancelled: ${bill._id}`);
+
     res.json({
       success: true,
       message: "Bill cancelled successfully",
       data: { bill },
+      cache: {
+        invalidated: true,
+        patterns: [`bills:*${id}*`, `bills:*patient:${bill.patientId}*`, 'bills:*status:cancelled*']
+      }
     });
   } catch (error) {
+    console.error('[BILLING] Error cancelling bill:', error);
     res.status(500).json({
       success: false,
       message: "Error cancelling bill",
@@ -330,10 +312,17 @@ router.delete("/deleteBill/:id", async (req, res) => {
   }
 });
 
-// Get bills by status
-router.get("/getByStatus/:status", async (req, res) => {
+/**
+ * GET BILLS BY STATUS - GET /api/billing/getByStatus/:status
+ * Retrieves bills filtered by status
+ * Cache Strategy: Cache status-based queries (5-minute TTL)
+ */
+router.get("/getByStatus/:status", billsCacheMiddleware, async (req, res) => {
   try {
     const { status } = req.params;
+    
+    console.log(`[BILLING] Fetching bills by status: ${status}`);
+    
     const bills = await Bill.find({ status }).sort({ createdAt: -1 });
 
     res.json({
@@ -343,8 +332,13 @@ router.get("/getByStatus/:status", async (req, res) => {
         bills,
         count: bills.length,
       },
+      cache: {
+        served_from: 'database', // Will be overridden if served from cache
+        status_filter: status
+      }
     });
   } catch (error) {
+    console.error('[BILLING] Error fetching bills by status:', error);
     res.status(500).json({
       success: false,
       message: "Error fetching bills by status",
@@ -353,10 +347,17 @@ router.get("/getByStatus/:status", async (req, res) => {
   }
 });
 
-// Get bills by patient ID
-router.get("/getByPatient/:patientId", async (req, res) => {
+/**
+ * GET BILLS BY PATIENT ID - GET /api/billing/getByPatient/:patientId
+ * Retrieves bills for a specific patient
+ * Cache Strategy: Cache patient-specific queries (5-minute TTL)
+ */
+router.get("/getByPatient/:patientId", billsCacheMiddleware, async (req, res) => {
   try {
     const { patientId } = req.params;
+    
+    console.log(`[BILLING] Fetching bills for patient: ${patientId}`);
+    
     const bills = await Bill.find({ patientId }).sort({ createdAt: -1 });
 
     res.json({
@@ -366,12 +367,101 @@ router.get("/getByPatient/:patientId", async (req, res) => {
         bills,
         count: bills.length,
       },
+      cache: {
+        served_from: 'database', // Will be overridden if served from cache
+        patient_id: patientId
+      }
     });
   } catch (error) {
+    console.error('[BILLING] Error fetching patient bills:', error);
     res.status(500).json({
       success: false,
       message: "Error fetching patient bills",
       error: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+/**
+ * CACHE MANAGEMENT ENDPOINTS
+ * Administrative endpoints for cache operations
+ */
+
+/**
+ * GET CACHE HEALTH - GET /api/billing/cache/health
+ * Check Redis cache health for billing service
+ */
+router.get("/cache/health", async (req, res) => {
+  try {
+    const isHealthy = await httpCacheService.healthCheck();
+    const cacheStats = await httpCacheService.getCacheStats();
+    
+    res.json({
+      success: true,
+      message: "Billing cache health check completed",
+      data: { 
+        healthy: isHealthy,
+        service: httpCacheService.getServiceName(),
+        stats: cacheStats
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Billing cache health check failed",
+      error: error instanceof Error ? error.message : "Unknown error"
+    });
+  }
+});
+
+/**
+ * DELETE CACHE - DELETE /api/billing/cache/flush
+ * Flush all billing-related cache entries
+ */
+router.delete("/cache/flush", async (req, res) => {
+  try {
+    await httpCacheService.invalidateBillsCache();
+    
+    res.json({
+      success: true,
+      message: "Bills cache flushed successfully",
+      data: {
+        timestamp: new Date().toISOString(),
+        service: httpCacheService.getServiceName()
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Error flushing bills cache",
+      error: error instanceof Error ? error.message : "Unknown error"
+    });
+  }
+});
+
+/**
+ * GET CACHE STATS - GET /api/billing/cache/stats
+ * Get detailed cache statistics for billing
+ */
+router.get("/cache/stats", async (req, res) => {
+  try {
+    const stats = await httpCacheService.getCacheStats();
+    
+    res.json({
+      success: true,
+      message: "Billing cache statistics retrieved",
+      data: {
+        stats,
+        namespace: 'bills',
+        service: httpCacheService.getServiceName(),
+        timestamp: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Error retrieving cache statistics",
+      error: error instanceof Error ? error.message : "Unknown error"
     });
   }
 });

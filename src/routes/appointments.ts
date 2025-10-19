@@ -10,7 +10,7 @@ import {
   getTodaysAppointments,
   updateAppointmentStatus,
 } from "../controllers/appointmentController";
-
+import { appointmentsCacheMiddleware, todaysAppointmentsCacheMiddleware, appointmentsCacheInvalidation } from "../middleware/cacheMiddleware";
 const router = express.Router();
 
 // All appointment routes require authentication and appointment access
@@ -18,28 +18,23 @@ const router = express.Router();
 router.use(authenticateUser);
 router.use(requireAppointmentAccess);
 
-// Create new appointment
-router.post("/create", createAppointment);
+// Write operations - with cache invalidation
+router.post("/create", appointmentsCacheInvalidation, createAppointment);
+router.put("/:id", appointmentsCacheInvalidation, updateAppointment);
+router.patch("/:id/status", appointmentsCacheInvalidation, updateAppointmentStatus);
+router.delete("/:id", appointmentsCacheInvalidation, deleteAppointment);
 
+// Read operations - with caching
 // Get all appointments with filters
-router.get("/", getAllAppointments);
+router.get("/", appointmentsCacheMiddleware, getAllAppointments);
 
-// Get today's appointments
-router.get("/today", getTodaysAppointments);
+// Get today's appointments (with shorter cache TTL)
+router.get("/today", todaysAppointmentsCacheMiddleware, getTodaysAppointments);
 
 // Get appointments by department
-router.get("/department/:department", getAppointmentsByDepartment);
+router.get("/department/:department", appointmentsCacheMiddleware, getAppointmentsByDepartment);
 
 // Get appointment by ID
-router.get("/:id", getAppointmentById);
-
-// Update appointment
-router.put("/:id", updateAppointment);
-
-// Update appointment status only
-router.patch("/:id/status", updateAppointmentStatus);
-
-// Delete appointment (soft delete)
-router.delete("/:id", deleteAppointment);
+router.get("/:id", appointmentsCacheMiddleware, getAppointmentById);
 
 export default router;

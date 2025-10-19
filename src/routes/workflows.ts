@@ -10,7 +10,7 @@ import {
   getWorkflowsByStatus,
   getWorkflowsByStage,
 } from "../controllers/workflowController";
-
+import { workflowsCacheMiddleware, workflowsCacheInvalidation } from "../middleware/cacheMiddleware";
 const router = express.Router();
 
 // All workflow routes require authentication and workflow access
@@ -18,28 +18,23 @@ const router = express.Router();
 router.use(authenticateUser);
 router.use(requireWorkflowAccess);
 
-// Create new workflow
-router.post("/create", createWorkflow);
+// Write operations - with cache invalidation
+router.post("/create", workflowsCacheInvalidation, createWorkflow);
+router.put("/:id/stage", workflowsCacheInvalidation, updateWorkflowStage);
+router.patch("/:id/status", workflowsCacheInvalidation, updateWorkflowStatus);
+router.delete("/:id", workflowsCacheInvalidation, deleteWorkflow);
 
+// Read operations - with caching
 // Get all workflows with filters
-router.get("/", getAllWorkflows);
+router.get("/", workflowsCacheMiddleware, getAllWorkflows);
 
 // Get workflows by status
-router.get("/status/:status", getWorkflowsByStatus);
+router.get("/status/:status", workflowsCacheMiddleware, getWorkflowsByStatus);
 
 // Get workflows by current stage
-router.get("/stage/:stage", getWorkflowsByStage);
+router.get("/stage/:stage", workflowsCacheMiddleware, getWorkflowsByStage);
 
 // Get workflow by ID
-router.get("/:id", getWorkflowById);
-
-// Update workflow stage
-router.put("/:id/stage", updateWorkflowStage);
-
-// Update workflow status only
-router.patch("/:id/status", updateWorkflowStatus);
-
-// Delete workflow (soft delete)
-router.delete("/:id", deleteWorkflow);
+router.get("/:id", workflowsCacheMiddleware, getWorkflowById);
 
 export default router;

@@ -13,7 +13,7 @@ import {
   getRoomsByDepartment,
   getRoomsByFloor,
 } from "../controllers/roomController";
-
+import { roomsCacheMiddleware, roomsCacheInvalidation } from "../middleware/cacheMiddleware";
 const router = express.Router();
 
 // All room routes require authentication and room access
@@ -21,37 +21,28 @@ const router = express.Router();
 router.use(authenticateUser);
 router.use(requireRoomAccess);
 
-// Create new room
-router.post("/create", createRoom);
+// Write operations - with cache invalidation
+router.post("/create", roomsCacheInvalidation, createRoom);
+router.put("/:id", roomsCacheInvalidation, updateRoom);
+router.post("/:id/assign", roomsCacheInvalidation, assignPatientToRoom);
+router.patch("/:id/discharge", roomsCacheInvalidation, dischargePatientFromRoom);
+router.patch("/:id/transfer", roomsCacheInvalidation, transferPatientFromRoom);
+router.delete("/:id", roomsCacheInvalidation, deleteRoom);
 
+// Read operations - with caching
 // Get all rooms with filters
-router.get("/", getAllRooms);
+router.get("/", roomsCacheMiddleware, getAllRooms);
 
 // Get available rooms only
-router.get("/available", getAvailableRooms);
+router.get("/available", roomsCacheMiddleware, getAvailableRooms);
 
 // Get rooms by department
-router.get("/department/:department", getRoomsByDepartment);
+router.get("/department/:department", roomsCacheMiddleware, getRoomsByDepartment);
 
 // Get rooms by floor
-router.get("/floor/:floor", getRoomsByFloor);
+router.get("/floor/:floor", roomsCacheMiddleware, getRoomsByFloor);
 
 // Get room by ID
-router.get("/:id", getRoomById);
-
-// Update room details
-router.put("/:id", updateRoom);
-
-// Assign patient to room
-router.post("/:id/assign", assignPatientToRoom);
-
-// Discharge patient from room
-router.patch("/:id/discharge", dischargePatientFromRoom);
-
-// Transfer patient from room
-router.patch("/:id/transfer", transferPatientFromRoom);
-
-// Delete room (soft delete)
-router.delete("/:id", deleteRoom);
+router.get("/:id", roomsCacheMiddleware, getRoomById);
 
 export default router;

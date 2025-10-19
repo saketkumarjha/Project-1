@@ -11,9 +11,10 @@ const router = express.Router();
 
 // Public routes
 router.post("/admin/login", adminLogin);
+router.post("/admin/logout", adminLogout);
+
 router.post("/accountant/login", accountantLogin);
 router.post("/staff/login", staffLogin);
-router.post("/logout", adminLogout);
 
 // Test room access permissions (specific to roomManagementAccess)
 router.get(

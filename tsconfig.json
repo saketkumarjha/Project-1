@@ -14,7 +14,7 @@
     "types": ["node"],
     "typeRoots": ["./node_modules/@types", "./src/types"],
     "allowSyntheticDefaultImports": true,
-    "ignoreDeprecations": "5.0"  // Suppress the deprecation warning
+    "ignoreDeprecations": "6.0"  // Suppress the deprecation warning
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]

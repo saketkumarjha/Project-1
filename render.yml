@@ -1,0 +1,31 @@
+services:
+  # Backend API
+  - type: web
+    name: hospital-backend
+    env: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5000
+      - key: MONGODB_URI
+        sync: false  # Set in Render dashboard
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: hospital-redis
+          property: connectionString
+      - key: JWT_SECRET
+        sync: false  # Set in Render dashboard
+      - key: JWT_EXPIRES_IN
+        value: 24h
+
+  # Redis Cache
+  - type: redis
+    name: hospital-redis
+    plan: free
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: []

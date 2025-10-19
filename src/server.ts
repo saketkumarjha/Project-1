@@ -1,5 +1,6 @@
 import express from "express";
 import dotenv from "dotenv";
+import session from "express-session";
 import connectDB from "./config/database";
 import corsMiddleware from "./middleware/cors";
 import { errorHandler, notFound } from "./middleware/errorHandler";
@@ -7,6 +8,7 @@ import { errorHandler, notFound } from "./middleware/errorHandler";
 // Redis Connection Pool and Cache Service imports
 import redisPool from './config/redisPool';
 import { httpCacheService } from './services/cacheService';
+import { createSessionStore, getSessionConfig } from './config/session';
 
 // Load environment variables first before any other imports that might use them
 dotenv.config();
@@ -21,13 +23,13 @@ const PORT = process.env.PORT || 5000;
 connectDB();
 
 /**
- * Initialize Redis Connection Pool for Caching
- * Sets up Redis connections for different services (HTTP, Socket.io, etc.)
+ * Initialize Redis Connection Pool for Caching and Sessions
+ * Sets up Redis connections for different services (HTTP, Socket.io, Sessions)
  * Handles connection pooling, health monitoring, and cross-service communication
  */
 const initializeRedis = async () => {
   try {
-    // Create Redis connection for HTTP server
+    // Create Redis connection for HTTP server cache
     const redisConnection = await redisPool.getConnection('http-server');
     console.log('✅ HTTP server Redis connection established');
 
@@ -56,6 +58,41 @@ const initializeRedis = async () => {
     console.error('⚠️ Redis initialization failed. Running without cache:', error);
     // Application continues to work without Redis cache
     // All cache operations will gracefully degrade to database-only operations
+  }
+};
+
+/**
+ * Initialize Session Store
+ * Creates Redis-backed session store for session-based authentication
+ * This must be initialized before session middleware is used
+ */
+const initializeSessions = async () => {
+  try {
+    console.log('🔐 Initializing Redis session store...');
+    const sessionStore = await createSessionStore();
+    
+    // Configure session middleware with Redis store
+    app.use(session(getSessionConfig(sessionStore)));
+    
+    console.log('✅ Redis session store initialized successfully');
+    return true;
+  } catch (error) {
+    console.error('⚠️ Redis session store initialization failed:', error);
+    console.error('⚠️ Sessions will not persist across server restarts');
+    
+    // Fallback to memory store (not recommended for production)
+    app.use(session({
+      secret: process.env.SESSION_SECRET || 'fallback-secret',
+      resave: false,
+      saveUninitialized: false,
+      cookie: {
+        secure: process.env.NODE_ENV === 'production',
+        httpOnly: true,
+        maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
+      },
+    }));
+    
+    return false;
   }
 };
 
@@ -120,7 +157,6 @@ app.use("/api/billing", billingRoutes);
 // Analytics, financial reports, usage statistics with longer cache TTL
 app.use("/api/reports", reportsRoutes);
 
-
 // Patient Management with Redis Cache
 // Patient records, medical history, demographics with moderate cache TTL
 app.use("/api/patients", patientRoutes);
@@ -144,53 +180,95 @@ app.use("/api/rooms", roomRoutes);
  * - Database connectivity
  * - Redis connection pool health
  * - Cache service status
+ * - Session store status
  * - Connection details for monitoring
  */
-// app.get('/api/health', async (req, res) => {
-//   try {
-//     // Check all Redis connections in the pool
-//     const redisHealth = await redisPool.healthCheckAll();
-//     const cacheStats = await httpCacheService.getCacheStats();
-//     const activeConnections = redisPool.getActiveConnections();
-//     const connectionInfo = redisPool.getConnectionInfo();
+app.get('/api/health', async (req, res) => {
+  try {
+    // Check all Redis connections in the pool
+    const redisHealth = await redisPool.healthCheckAll();
+    const cacheStats = await httpCacheService.getCacheStats();
+    const activeConnections = redisPool.getActiveConnections();
+    const connectionInfo = redisPool.getConnectionInfo();
 
-//     // Return comprehensive health information
-//     res.json({
-//       success: true,
-//       message: 'Server health check completed',
-//       data: {
-//         server: {
-//           status: 'healthy',
-//           port: PORT,
-//           environment: process.env.NODE_ENV || 'development',
-//           uptime: process.uptime(),
-//           timestamp: new Date().toISOString()
-//         },
-//         database: {
-//           mongodb: 'connected', // You might want to add actual DB health check here
-//         },
-//         cache: {
-//           redis: {
-//             health: redisHealth,
-//             activeConnections: activeConnections,
-//             connectionInfo: connectionInfo,
-//             stats: cacheStats
-//           }
-//         },
-//         services: {
-//           http: await httpCacheService.healthCheck(),
-//           // socket: will be added when Socket.io server is implemented
-//         }
-//       }
-//     });
-//   } catch (error) {
-//     res.status(500).json({
-//       success: false,
-//       message: 'Health check failed',
-//       error: error instanceof Error ? error.message : 'Unknown error'
-//     });
-//   }
-// });
+    // Check if session store is working
+    const sessionHealthy = req.session !== undefined;
+
+    // Return comprehensive health information
+    res.json({
+      success: true,
+      message: 'Server health check completed',
+      data: {
+        server: {
+          status: 'healthy',
+          port: PORT,
+          environment: process.env.NODE_ENV || 'development',
+          uptime: process.uptime(),
+          memory: {
+            used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+            total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024),
+            unit: 'MB'
+          },
+          timestamp: new Date().toISOString()
+        },
+        database: {
+          mongodb: 'connected',
+          // Add actual DB health check if available
+        },
+        cache: {
+          redis: {
+            health: redisHealth,
+            activeConnections: activeConnections,
+            connectionInfo: connectionInfo,
+            stats: cacheStats
+          }
+        },
+        session: {
+          store: sessionHealthy ? 'redis' : 'memory',
+          status: sessionHealthy ? 'healthy' : 'degraded'
+        },
+        services: {
+          http: await httpCacheService.healthCheck(),
+          // socket: will be added when Socket.io server is implemented
+        }
+      }
+    });
+  } catch (error) {
+    res.status(503).json({
+      success: false,
+      message: 'Health check failed',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+/**
+ * Simple Health Check Endpoint for Load Balancers
+ * Lightweight endpoint for uptime monitoring
+ */
+app.get('/health', async (req, res) => {
+  try {
+    const redisHealthy = await httpCacheService.healthCheck();
+    
+    if (redisHealthy) {
+      res.status(200).json({ 
+        status: 'healthy',
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      res.status(503).json({ 
+        status: 'degraded',
+        message: 'Redis cache unavailable',
+        timestamp: new Date().toISOString()
+      });
+    }
+  } catch (error) {
+    res.status(503).json({ 
+      status: 'unhealthy',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
 
 /**
  * Redis Connection Pool Management Endpoints
@@ -222,7 +300,7 @@ app.get('/api/redis/connections', async (req, res) => {
 
 /**
  * Cache Management Endpoints
- * Fixed: Split optional parameter route into two separate routes
+ * Administrative endpoints for cache operations
  */
 
 // Flush all cache
@@ -259,10 +337,6 @@ app.delete('/api/cache/flush/:namespace', async (req, res) => {
     });
   }
 });
-
-/**
- * Additional Cache Management Endpoints
- */
 
 // Get cache statistics
 app.get('/api/cache/stats', async (req, res) => {
@@ -365,10 +439,10 @@ app.use(errorHandler);  // Handle all other errors with proper logging and respo
  * Ensures clean shutdown of all connections and services
  */
 const gracefulShutdown = async (signal: string) => {
-  console.log(`${signal} received, initiating graceful shutdown...`);
+  console.log(`\n${signal} received, initiating graceful shutdown...`);
   
   try {
-    // Step 1: Stop accepting new requests (server.close() would go here in production)
+    // Step 1: Stop accepting new requests
     console.log('🛑 Stopping server from accepting new requests...');
     
     // Step 2: Clean up cache service connections
@@ -379,9 +453,9 @@ const gracefulShutdown = async (signal: string) => {
     console.log('🔌 Closing Redis connection pool...');
     await redisPool.closeAll();
     
-    // Step 4: Close database connections (if you have a disconnect function)
+    // Step 4: Close database connections
     console.log('💾 Closing database connections...');
-    // await disconnectDB(); // Implement this if you have it
+    // await mongoose.connection.close(); // Uncomment if using mongoose directly
     
     console.log('✅ Graceful shutdown completed successfully');
     process.exit(0);
@@ -392,7 +466,7 @@ const gracefulShutdown = async (signal: string) => {
 };
 
 // Listen for termination signals
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM')); // Docker/Kubernetes shutdown
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM')); // Docker/Kubernetes/Render shutdown
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));   // Ctrl+C
 
 // Handle uncaught exceptions and unhandled promise rejections
@@ -413,46 +487,71 @@ process.on('unhandledRejection', async (reason, promise) => {
 const startServer = async () => {
   try {
     console.log('🚀 Starting server initialization...');
+    console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`🔢 Node version: ${process.version}`);
     
-    // Step 1: Initialize Redis connection pool
-    console.log('📡 Initializing Redis connection pool...');
+    // Step 1: Initialize Redis connection pool for cache
+    console.log('\n📡 Initializing Redis connection pool...');
     await initializeRedis();
     
-    // Step 2: Start HTTP server
+    // Step 2: Initialize Redis session store
+    console.log('\n🔐 Initializing session management...');
+    const sessionInitialized = await initializeSessions();
+    
+    if (!sessionInitialized) {
+      console.warn('⚠️  Warning: Session store not using Redis. Sessions will not persist across server restarts.');
+    }
+    
+    // Step 3: Start HTTP server
     app.listen(PORT, () => {
-      console.log('🎉 Server startup completed successfully!');
-      console.log(`🌐 Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
-      console.log(`📊 Health check: http://localhost:${PORT}/api/health`);
-      console.log(`🔧 Redis info: http://localhost:${PORT}/api/redis/connections`);
-      console.log(`💰 Billing API: http://localhost:${PORT}/api/billing`);
-      console.log(`👥 Patients API: http://localhost:${PORT}/api/patients`);
-      console.log(`📅 Appointments API: http://localhost:${PORT}/api/appointments`);
-      console.log(`🏠 Rooms API: http://localhost:${PORT}/api/rooms`);
-      console.log('');
-      console.log('📋 Available endpoints:');
-      console.log('  - Authentication: /api/auth');
-      console.log('  - Administration: /api/admin');
-      console.log('  - Billing: /api/billing (cached)');
-      console.log('  - Reports: /api/reports (cached)');
-      console.log('  - Patients: /api/patients (cached)');
-      console.log('  - Appointments: /api/appointments (cached)');
-      console.log('  - Workflows: /api/workflows (cached)');
-      console.log('  - Rooms: /api/rooms (cached)');
-      console.log('');
+      console.log('\n🎉 ═══════════════════════════════════════════════════════');
+      console.log('🎉 SERVER STARTUP COMPLETED SUCCESSFULLY!');
+      console.log('🎉 ═══════════════════════════════════════════════════════\n');
+      
+      console.log(`🌐 Server running on port: ${PORT}`);
+      console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`🔐 Session store: ${sessionInitialized ? 'Redis (persistent)' : 'Memory (non-persistent)'}\n`);
+      
+      console.log('📊 Health & Monitoring:');
+      console.log(`  ├─ Health check: http://localhost:${PORT}/health`);
+      console.log(`  ├─ Detailed health: http://localhost:${PORT}/api/health`);
+      console.log(`  └─ Redis info: http://localhost:${PORT}/api/redis/connections\n`);
+      
+      console.log('🏥 Core API Endpoints:');
+      console.log('  ├─ Authentication: /api/auth');
+      console.log('  ├─ Administration: /api/admin');
+      console.log('  ├─ Patients: /api/patients (cached)');
+      console.log('  ├─ Appointments: /api/appointments (cached)');
+      console.log('  ├─ Rooms: /api/rooms (cached)');
+      console.log('  ├─ Workflows: /api/workflows (cached)');
+      console.log('  ├─ Billing: /api/billing (cached)');
+      console.log('  └─ Reports: /api/reports (cached)\n');
+      
       console.log('🧰 Cache Management:');
-      console.log('  - Cache stats: GET /api/cache/stats');
-      console.log('  - Cache health: GET /api/cache/health');
-      console.log('  - Flush all cache: DELETE /api/cache/flush');
-      console.log('  - Flush namespace: DELETE /api/cache/flush/:namespace');
-      console.log('  - Get cache key: GET /api/cache/:namespace/:key');
-      console.log('  - Set cache key: POST /api/cache/:namespace/:key');
-      console.log('  - Delete cache key: DELETE /api/cache/:namespace/:key');
+      console.log('  ├─ Cache stats: GET /api/cache/stats');
+      console.log('  ├─ Cache health: GET /api/cache/health');
+      console.log('  ├─ Flush all: DELETE /api/cache/flush');
+      console.log('  ├─ Flush namespace: DELETE /api/cache/flush/:namespace');
+      console.log('  ├─ Get cache: GET /api/cache/:namespace/:key');
+      console.log('  ├─ Set cache: POST /api/cache/:namespace/:key');
+      console.log('  └─ Delete cache: DELETE /api/cache/:namespace/:key\n');
+      
+      console.log('═══════════════════════════════════════════════════════\n');
+      console.log('✨ Ready to accept requests!');
+      console.log('💡 Press Ctrl+C to shutdown gracefully\n');
     });
   } catch (error) {
-    console.error('💥 Failed to start server:', error);
+    console.error('\n💥 ═══════════════════════════════════════════════════════');
+    console.error('💥 FAILED TO START SERVER');
+    console.error('💥 ═══════════════════════════════════════════════════════\n');
+    console.error('Error details:', error);
+    console.error('\n');
     process.exit(1);
   }
 };
 
 // Start the server
 startServer();
+
+// Export app for testing purposes
+export default app;

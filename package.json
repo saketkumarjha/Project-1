@@ -1,12 +1,17 @@
 {
-  "name": "backend",
+  "name": "hospital-backend",
   "version": "1.0.0",
-  "description": "",
+  "description": "Hospital Management System Backend API",
   "main": "dist/server.js",
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
   "scripts": {
     "start": "node dist/server.js",
     "dev": "nodemon src/server.ts",
     "build": "tsc",
+    "postbuild": "echo 'Build completed successfully'",
     "seed": "ts-node src/scripts/seedDatabase.ts",
     "verify-db": "ts-node src/scripts/verifyDatabase.ts",
     "check-db": "ts-node src/scripts/checkDatabase.ts",
@@ -15,7 +20,12 @@
     "test-connection": "ts-node src/scripts/testConnection.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
+  "keywords": [
+    "hospital",
+    "management",
+    "api",
+    "healthcare"
+  ],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
@@ -24,18 +34,21 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/redis": "^4.0.10",
     "bcryptjs": "^3.0.2",
+    "connect-redis": "^9.0.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.2",
     "eventemitter3": "^5.0.1",
     "express": "^5.1.0",
+    "express-session": "^1.18.2",
     "ioredis": "^5.7.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.18.0",
-    "redis": "^5.8.2"
+    "redis": "^5.8.3"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.3",
+    "@types/express-session": "^1.18.2",
     "@types/ioredis": "^4.28.10",
     "@types/node": "^24.3.1",
     "axios": "^1.6.2",

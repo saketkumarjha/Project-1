@@ -39,9 +39,8 @@ export const createSessionStore = async () => {
   // Connect to Redis
   await redisClient.connect();
 
-  // Create Redis store - RedisStore is a factory function that returns a class
-  const RedisStoreClass = RedisStore(session);
-  return new RedisStoreClass({
+  // Create Redis store - use 'new' with RedisStore directly
+  return new RedisStore({
     client: redisClient as any, // Type workaround for redis v4 compatibility
     prefix: 'sess:',
     ttl: 604800,

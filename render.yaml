@@ -1,31 +1,57 @@
 services:
-  # Backend API
+  # Backend API Service
   - type: web
     name: hospital-backend
     env: node
     plan: free
+    region: oregon
     buildCommand: npm install && npm run build
     startCommand: npm start
+    healthCheckPath: /health
     envVars:
+      # Server Configuration
       - key: NODE_ENV
         value: production
+      
       - key: PORT
         value: 5000
+      
+      # Database Configuration
       - key: MONGODB_URI
-        sync: false  # Set in Render dashboard
+        sync: false  # Set manually in Render dashboard (keep it secret!)
+      
+      # Redis Configuration (Auto-injected from Redis service)
       - key: REDIS_URL
         fromService:
           type: redis
           name: hospital-redis
           property: connectionString
+      
+      # JWT Configuration
       - key: JWT_SECRET
-        sync: false  # Set in Render dashboard
+        sync: false  # Set manually in Render dashboard (keep it secret!)
+      
       - key: JWT_EXPIRES_IN
         value: 24h
+      
+      # Session Configuration
+      - key: SESSION_SECRET
+        sync: false  # Set manually in Render dashboard (keep it secret!)
+      
+      # CORS Configuration
+      - key: FRONTEND_URL
+        value: http://localhost:3000  # Update this when frontend is deployed
+    
+    # Auto-deploy settings
+    autoDeploy: true
+    
+    # Build settings
+    dockerfilePath: false
 
-  # Redis Cache
+  # Redis Cache & Session Store
   - type: redis
     name: hospital-redis
     plan: free
+    region: oregon
     maxmemoryPolicy: allkeys-lru
-    ipAllowList: []
+    ipAllowList: []  # Allow all IPs (can restrict later)

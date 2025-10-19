@@ -18,7 +18,7 @@ services:
       
       # Database Configuration
       - key: MONGODB_URI
-        sync: false  # Set manually in Render dashboard (keep it secret!)
+        sync: false
       
       # Redis Configuration (Auto-injected from Redis service)
       - key: REDIS_URL
@@ -29,24 +29,18 @@ services:
       
       # JWT Configuration
       - key: JWT_SECRET
-        sync: false  # Set manually in Render dashboard (keep it secret!)
+        sync: false
       
       - key: JWT_EXPIRES_IN
         value: 24h
       
       # Session Configuration
       - key: SESSION_SECRET
-        sync: false  # Set manually in Render dashboard (keep it secret!)
+        sync: false
       
       # CORS Configuration
       - key: FRONTEND_URL
-        value: http://localhost:3000  # Update this when frontend is deployed
-    
-    # Auto-deploy settings
-    autoDeploy: true
-    
-    # Build settings
-    dockerfilePath: false
+        value: http://localhost:3000
 
   # Redis Cache & Session Store
   - type: redis
@@ -54,4 +48,4 @@ services:
     plan: free
     region: oregon
     maxmemoryPolicy: allkeys-lru
-    ipAllowList: []  # Allow all IPs (can restrict later)
+    ipAllowList: []

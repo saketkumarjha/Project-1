@@ -154,14 +154,14 @@ const startServer = async () => {
      * Routes are imported AFTER session initialization to ensure they have access
      * to the session middleware
      */
-    const authRoutes = (await import("./routes/auth.js")).default;
-    const adminRoutes = (await import("./routes/admin.js")).default;
-    const billingRoutes = (await import("./routes/billing.js")).default;
-    const reportsRoutes = (await import("./routes/reports.js")).default;
-    const patientRoutes = (await import("./routes/patients.js")).default;
-    const appointmentRoutes = (await import("./routes/appointments.js")).default;
-    const workflowRoutes = (await import("./routes/workflows.js")).default;
-    const roomRoutes = (await import("./routes/rooms.js")).default;
+    const authRoutes = (await import("./routes/auth")).default;
+    const adminRoutes = (await import("./routes/admin")).default;
+    const billingRoutes = (await import("./routes/billing")).default;
+    const reportsRoutes = (await import("./routes/reports")).default;
+    const patientRoutes = (await import("./routes/patients")).default;
+    const appointmentRoutes = (await import("./routes/appointments")).default;
+    const workflowRoutes = (await import("./routes/workflows")).default;
+    const roomRoutes = (await import("./routes/rooms")).default;
 
     /**
      * Authentication and Authorization Routes

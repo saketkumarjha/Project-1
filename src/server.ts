@@ -492,7 +492,7 @@ const startServer = async () => {
     app.use(errorHandler); // Handle all other errors with proper logging and response formatting
 
     // Step 4: Start HTTP server
-    app.listen(PORT, () => {
+    app.listen(Number(PORT),  '0.0.0.0', () => {
       console.log(
         "\n🎉 ═══════════════════════════════════════════════════════"
       );
